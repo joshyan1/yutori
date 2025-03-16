@@ -5,9 +5,10 @@ import json
 from utils import get_sanitized_name_from_url
 
 class Asset:
-    def __init__(self, url: str, asset_type: str):
+    def __init__(self, url: str, asset_type: str, text: str = None):
         self.url = url
         self.asset_type = asset_type
+        self.text = text # For images, this is the alt text
 
 class Assets:
     def __init__(self):

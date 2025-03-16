@@ -15,3 +15,9 @@ venv/
 
 # Logging data
 site_data/
+
+# Test files
+test.html
+test_truncate.py
+
+.DS_Store
