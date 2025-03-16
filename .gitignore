@@ -1,0 +1,17 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Persistent working directories
+persistent_user_data/
+assets/
+
+# Environment variables
+.env
+
+# Virtual env
+venv/
+
+# Logging data
+site_data/
