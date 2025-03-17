@@ -7,11 +7,15 @@ import anthropic
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 from data_models import Page, Site, Interaction
+import base64
+from utils import get_sanitized_name_from_url
+
+map_url_to_file = {}
 
 # System prompt for the LLM
-SYSTEM_PROMPT = """You are an expert web developer specializing in creating interactive websites.
-Your task is to implement functionality for HTML elements without changing the overall structure or design.
-Focus only on making interactive elements work properly with JavaScript."""
+SYSTEM_PROMPT = """You are an intelligent web developer that specializes in producing websites from top tier design companies. 
+Do your absolute best to create the page or else you will be fired.
+Your sites are written in HTML, CSS, and JavaScript."""
 
 # Prompt for implementing functionality for clickable elements
 FUNCTIONALITY_PROMPT = """I have an HTML page with various interactive elements (buttons, filters, dropdowns, etc.).
@@ -22,6 +26,8 @@ For each interactive element:
 2. Implement appropriate event listeners and functions
 3. For elements that would normally trigger backend requests, create mock functions that simulate the expected behavior
 4. Ensure all interactions have a visible effect on the page (e.g., filtering, showing/hiding elements, etc.)
+5. Do not implement any logging functionalities. Make each function have a visible effect on the page.
+6. Filters should affect the DOM elements directly.
 
 Specific implementation requirements:
 - For filter buttons/dropdowns: Implement filtering functionality that shows/hides elements based on the selected filter
@@ -52,6 +58,39 @@ If it's an external link or points to a page we don't have locally, return the o
 For relative links (starting with / or without http), try to match them to our local files.
 
 Return ONLY the corrected link path with no explanation or additional text.
+"""
+
+# New prompt for batch processing links
+BATCH_LINK_FIX_PROMPT = """I need to update multiple links in an HTML page to point to the correct local files.
+
+Original page URL: {page_url}
+
+Available local HTML files:
+{available_files}
+
+URL mapping information:
+{url_mapping}
+
+Here are the links that need to be updated:
+{links_to_fix}
+
+For each link, determine if it points to a page that exists in our local collection:
+- If it does, provide the correct local filename
+- If it's an external link or points to a page we don't have locally, return the original link
+- For relative links (starting with / or without http), try to match them to our local files
+
+Return your answers in a JSON format where each key is the link ID and the value is the corrected link path.
+The JSON must be valid and properly formatted with no line breaks within the values.
+
+Example of the expected JSON format:
+{
+  "link_1": "corrected_path_1.html",
+  "link_2": "corrected_path_2.html",
+  "link_3": "original_link_3"
+}
+
+IMPORTANT: Your response must contain ONLY the JSON object with no additional text, explanation, or formatting.
+Do not include any text before or after the JSON object. The JSON must be valid and parseable.
 """
 
 def enhanced_injection_workflow(site: Site):
@@ -182,8 +221,8 @@ def initialize_html(client, page: Page, directory: str):
     # Create the streaming request
     with client.messages.stream(
         model="claude-3-7-sonnet-20250219",
-        max_tokens=40000,
-        temperature=0,
+        max_tokens=20000,
+        temperature=1,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -403,26 +442,19 @@ def implement_page_functionality(client, page: Page, source_file: str, output_di
         
         for el in elements[:10]:  # Limit to 10 elements per group to avoid token limits
             elements_info.append(
-                f"Element: {el.name} (id={el.get('id', 'None')}, class={el.get('class', 'None')})"
-                f"\nText: {el.get_text().strip()[:100]}"
-                f"\nAttributes: {str(el.attrs)[:200]}"
+                str(el) + "\n"
             )
-            
+        
         if len(elements) > 10:
             elements_info.append(f"... and {len(elements) - 10} more {group_name}")
     
     elements_info_str = "\n".join(elements_info)
     
-    # Include information about recorded interactions if available
-    interactions_info = ""
-    if page.interactions:
-        interactions_info = "Recorded interactions:\n" + page.synthesize_interactions()
-    
     # Get the page title for context
     page_title = soup.title.string if soup.title else page.url
     
-    # Prepare the full prompt
-    full_prompt = f"""
+    # Prepare the text prompt
+    text_prompt = f"""
 {FUNCTIONALITY_PROMPT}
 
 Page URL: {page.url}
@@ -431,29 +463,63 @@ Page Title: {page_title}
 Interactive elements found:
 {elements_info_str}
 
-{interactions_info}
-
-HTML structure (truncated):
-{soup.prettify()[:5000]}
+{soup.prettify()[400:900]}
 """
+
+    # Prepare message content with text and images from interactions
+    message_content = [{"type": "text", "text": text_prompt}]
+    
+    # Add images from interactions if available
+    if page.interactions:
+        
+        for idx, interaction in enumerate(page.interactions):
+            if interaction.interaction_screenshot and os.path.exists(interaction.interaction_screenshot):
+                try:
+                    # Read and encode the image
+                    with open(interaction.interaction_screenshot, "rb") as img_file:
+                        img_data = base64.b64encode(img_file.read()).decode("utf-8")
+                    
+                    # Add image description
+                    message_content.append({
+                        "type": "text",
+                        "text": f"Interaction {idx+1} with element: {interaction.element_selector or interaction.dom_path or 'Unknown'}"
+                    })
+                    
+                    # Add the image
+                    message_content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",  # Assuming screenshots are PNG
+                            "data": img_data
+                        }
+                    })
+                    
+                    # Add interaction details
+                    message_content.append({
+                        "type": "text",
+                        "text": f"Interaction details: {str(interaction)}"
+                    })
+                except Exception as e:
+                    print(f"Error processing interaction image {interaction.interaction_screenshot}: {e}")
     
     # Call Anthropic to generate JavaScript code
     try:
         response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
-            max_tokens=4000,
+            max_tokens=20000,
             temperature=0,
             system=SYSTEM_PROMPT,
             messages=[
                 {
                     "role": "user",
-                    "content": full_prompt
+                    "content": message_content
                 }
             ]
         )
         
         js_code = response.content[0].text
-        
+        print(js_code)
         # Extract JavaScript code from code blocks if present
         if "```javascript" in js_code or "```js" in js_code:
             # Extract code from JavaScript code blocks
@@ -576,7 +642,7 @@ def inject_javascript(soup: BeautifulSoup, js_code: str):
 
 def fix_page_links(client, page: Page, functionality_file: str, final_dir: str, available_files: list, site: Site):
     """
-    Fixes links in the page to point to the correct local files by processing each link individually.
+    Fixes links in the page to point to the correct local files by processing links in batches.
     """
     page_filename = os.path.basename(functionality_file)
     output_file = os.path.join(final_dir, page_filename)
@@ -624,11 +690,20 @@ def fix_page_links(client, page: Page, functionality_file: str, final_dir: str, 
         return
     
     print(f"Found {len(links)} links in {page.url}")
-    links_updated = 0
     
-    # Process each link individually
-    for link in links:
+    # Filter links that need processing
+    links_to_process = []
+    link_elements = {}  # Map to store link elements by ID
+    
+    for i, link in enumerate(links):
+
         original_href = link.get("href", "")
+        sanitized_name = get_sanitized_name_from_url("ubereats" + original_href)
+        if sanitized_name[1:] in map_url_to_file:
+            link["href"] = map_url_to_file[sanitized_name[1:]] + ".html"
+            print(f"Mapped link: {original_href} -> {map_url_to_file[sanitized_name[1:]]}.html")
+
+        """ original_href = link.get("href", "")
         link_text = link.get_text().strip()
         
         if not original_href:
@@ -664,53 +739,203 @@ def fix_page_links(client, page: Page, functionality_file: str, final_dir: str, 
             if absolute_href in url_to_file_map:
                 link["href"] = url_to_file_map[absolute_href]
                 print(f"Direct mapping found: {original_href} -> {url_to_file_map[absolute_href]}")
-                links_updated += 1
                 continue
         
-        # Prepare the prompt for this specific link
-        link_prompt = LINK_FIX_PROMPT.format(
-            original_link=original_href,
+        # Add this link to the batch for processing
+        link_id = f"link_{i}"
+        links_to_process.append({
+            "id": link_id,
+            "href": original_href,
+            "text": link_text
+        })
+        link_elements[link_id] = link
+    
+    # If no links need processing, just write the file and return
+    if not links_to_process:
+        print(f"No links need processing for {page.url}")
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(str(soup))
+        return
+    
+    # Process links in batches of 25 (reduced from 50 to avoid token limit issues)
+    batch_size = 25
+    links_updated = 0
+    failed_links = []  # Track links that failed in batch processing
+    
+    for i in range(0, len(links_to_process), batch_size):
+        batch = links_to_process[i:i+batch_size]
+        
+        # Format the links for the prompt
+        links_to_fix_str = "\n".join([
+            f"Link ID: {link['id']}\nOriginal link: {link['href']}\nLink text: {link['text']}\n"
+            for link in batch
+        ])
+        
+        # Prepare the batch prompt
+        batch_prompt = BATCH_LINK_FIX_PROMPT.format(
             page_url=page.url,
-            link_text=link_text,
             available_files=available_files_str,
-            url_mapping=url_mapping_info
+            url_mapping=url_mapping_info,
+            links_to_fix=links_to_fix_str
         )
+        print(batch_prompt)
         
         try:
-            # Call Anthropic to fix this specific link
+            # Call Anthropic to fix this batch of links
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=100,  # Small token limit since we only need a simple response
+                max_tokens=2000,  # Increased token limit for batch processing
                 temperature=0,
                 system=SYSTEM_PROMPT,
                 messages=[
                     {
                         "role": "user",
-                        "content": link_prompt
+                        "content": batch_prompt
                     }
                 ]
             )
             
-            # Get the corrected link
-            corrected_link = response.content[0].text.strip()
+            print(response.content[0].text)
+            # Get the corrected links as JSON
+            response_text = response.content[0].text.strip()
+            print(response_text)
             
-            # Update the link in the soup
-            if corrected_link and corrected_link != original_href:
-                link["href"] = corrected_link
-                print(f"Updated link: {original_href} -> {corrected_link}")
-                links_updated += 1
+            # Extract JSON from the response if it's wrapped in code blocks
+            if "```json" in response_text and "```" in response_text.split("```json", 1)[1]:
+                json_str = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text and "```" in response_text.split("```", 1)[1]:
+                json_str = response_text.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = response_text
+            
+            # Parse the JSON response
+            try:
+                # Clean up the JSON string to handle potential formatting issues
+                # Remove any leading/trailing whitespace and ensure it starts with {
+                json_str = json_str.strip()
+                if not json_str.startswith('{'):
+                    # Find the first occurrence of { and start from there
+                    start_idx = json_str.find('{')
+                    if start_idx != -1:
+                        json_str = json_str[start_idx:]
+                    else:
+                        raise ValueError("No JSON object found in response")
+                
+                # Find the last occurrence of } to handle any trailing text
+                end_idx = json_str.rfind('}')
+                if end_idx != -1:
+                    json_str = json_str[:end_idx+1]
+                
+                # Try to parse the cleaned JSON
+                try:
+                    corrected_links = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # If still failing, try a more aggressive cleanup approach
+                    # This handles cases where there might be line breaks or other characters in the JSON
+                    import re
+                    # Extract what looks like a JSON object
+                    json_match = re.search(r'\{.*\}', json_str, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        # Replace any problematic characters
+                        json_str = re.sub(r'[\n\r\t]', '', json_str)
+                        corrected_links = json.loads(json_str)
+                    else:
+                        raise ValueError("Could not extract valid JSON from response")
+                
+                # Update the links in the soup
+                for link_id, corrected_href in corrected_links.items():
+                    if link_id in link_elements:
+                        link_element = link_elements[link_id]
+                        original_href = link_element.get("href", "")
+                        
+                        if corrected_href and corrected_href != original_href:
+                            link_element["href"] = corrected_href
+                            print(f"Updated link: {original_href} -> {corrected_href}")
+                            links_updated += 1
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error parsing JSON response for batch {i//batch_size + 1}: {e}")
+                print(f"Response was: {json_str}")
+                # Log the full response for debugging
+                debug_dir = os.path.join(os.path.dirname(final_dir), "debug")
+                os.makedirs(debug_dir, exist_ok=True)
+                debug_file = os.path.join(debug_dir, f"{page_filename}_batch_{i//batch_size + 1}_response.txt")
+                with open(debug_file, "w", encoding="utf-8") as f:
+                    f.write(f"Original response:\n{response_text}\n\nExtracted JSON:\n{json_str}")
+                print(f"Full response saved to {debug_file}")
+                
+                # Add all links in this batch to the failed links list for individual processing
+                failed_links.extend(batch)
                 
         except Exception as e:
-            print(f"Error fixing link {original_href}: {e}")
-            # Continue with the next link
+            print(f"Error processing batch {i//batch_size + 1}: {e}")
+            # Add all links in this batch to the failed links list for individual processing
+            failed_links.extend(batch)
     
+    # Process any failed links individually as a fallback
+    if failed_links:
+        print(f"Processing {len(failed_links)} failed links individually as fallback")
+        individual_success = 0
+        
+        for link_info in failed_links:
+            link_id = link_info["id"]
+            original_href = link_info["href"]
+            link_text = link_info["text"]
+            
+            if link_id not in link_elements:
+                continue
+                
+            link_element = link_elements[link_id]
+            
+            # Prepare the prompt for this specific link
+            link_prompt = LINK_FIX_PROMPT.format(
+                original_link=original_href,
+                page_url=page.url,
+                link_text=link_text,
+                available_files=available_files_str,
+                url_mapping=url_mapping_info
+            )
+            
+            try:
+                # Call Anthropic to fix this specific link
+                response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=100,  # Small token limit since we only need a simple response
+                    temperature=0,
+                    system=SYSTEM_PROMPT,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": link_prompt
+                        }
+                    ]
+                )
+                
+                # Get the corrected link
+                corrected_link = response.content[0].text.strip()
+                
+                # Update the link in the soup
+                if corrected_link and corrected_link != original_href:
+                    link_element["href"] = corrected_link
+                    print(f"Updated link (individual): {original_href} -> {corrected_link}")
+                    links_updated += 1
+                    individual_success += 1
+                    
+            except Exception as e:
+                print(f"Error fixing individual link {original_href}: {e}")
+        
+        print(f"Individual processing complete: {individual_success}/{len(failed_links)} links fixed") """
+    
+    print(map_url_to_file)
     # Write the updated HTML to the output file
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(str(soup))
         
-    print(f"Fixed {links_updated} links for {page.url}")
+    #print(f"Fixed {links_updated} links for {page.url}")
 
 def sanitize_filename(filename: str) -> str:
     """Replace any problematic filesystem characters."""
     sanitized = re.sub(r'[\\/*?:"<>|]', '_', filename)
+    map_url_to_file[filename] = sanitized
     return sanitized 

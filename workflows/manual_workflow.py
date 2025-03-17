@@ -146,6 +146,11 @@ async def manual_workflow(playwright_page, start_url):
 
     # We'll first track user interactions on the page
     async def on_page_interaction(event_data: dict):
+
+        # Check if the clicked element was an <a> tag, skip if it was
+        if event_data.get("tagName", "").lower() == "a":
+            print(f"Skipping interaction logging for <a> tag: {event_data.get('domPath')}")
+            return
         # Use numeric timestamp for better comparison
         timestamp = time.time()
         screenshot_filename = f"{time.strftime('%Y%m%d-%H%M%S')}.png"
@@ -159,6 +164,7 @@ async def manual_workflow(playwright_page, start_url):
         
         # Take screenshot immediately after interaction
         await playwright_page.wait_for_load_state('networkidle')
+        time.sleep(0.2)
         screenshot_path = os.path.join("assets", current_page.dir, screenshot_filename)
         await playwright_page.screenshot(path=screenshot_path)
         

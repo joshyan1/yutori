@@ -34,14 +34,33 @@ def extract_assets_from_html(html_content, page_url, page):
             if file_path:
                 page.assets.styling.append(Asset(url=file_path, asset_type='css'))
     
-    for script in soup.find_all('script', src=True):
+    # Process JavaScript files
+    """ for script in soup.find_all('script', src=True):
         src = script.get('src')
         if src:
-            asset_url, file_path = download_asset(src, base_url, page_assets_dir, 'js')
+            # Create a js directory within the page assets directory
+            js_dir = page_assets_dir
+            os.makedirs(js_dir, exist_ok=True)
+            
+            # Use the new download_javascript_asset function
+            asset_url, file_path = download_javascript_asset(src, base_url, js_dir)
             if file_path:
                 page.assets.js.append(Asset(url=file_path, asset_type='js'))
     
-    for link in soup.find_all('link', rel='icon'):
+    # Also process JavaScript files referenced in link tags with rel="preload" and as="script"
+    for link in soup.find_all('link', attrs={'rel': 'preload', 'as': 'script'}):
+        href = link.get('href')
+        if href:
+            # Create a js directory within the page assets directory
+            js_dir = os.path.join(page_assets_dir, "js")
+            os.makedirs(js_dir, exist_ok=True)
+            
+            # Use the new download_javascript_asset function
+            asset_url, file_path = download_javascript_asset(href, base_url, js_dir)
+            if file_path:
+                page.assets.js.append(Asset(url=file_path, asset_type='js')) """
+    
+    """ for link in soup.find_all('link', rel='icon'):
         href = link.get('href')
         if href:
             asset_url, file_path = download_asset(href, base_url, page_assets_dir, 'favicon')
@@ -54,7 +73,7 @@ def extract_assets_from_html(html_content, page_url, page):
         for url in urls:
             asset_url, file_path = download_asset(url, base_url, page_assets_dir, 'bg-img')
             if file_path:
-                page.assets.imgs.append(Asset(url=file_path, asset_type='bg-img'))
+                page.assets.imgs.append(Asset(url=file_path, asset_type='bg-img')) """
                 
     return page
 
@@ -73,7 +92,7 @@ def download_asset(asset_url, base_url, save_dir, asset_type):
             # print(f"Skipping {asset_url} because of status code {response.status_code}")
             return None, None
 
-        # Retrieve the content type
+        """ # Retrieve the content type
         content_type = response.headers.get("content-type", "").lower()
         guessed_ext = None
         if content_type:
@@ -96,9 +115,9 @@ def download_asset(asset_url, base_url, save_dir, asset_type):
 
         url_hash = hashlib.md5(asset_url.encode('utf-8')).hexdigest()
         final_ext = ext_in_url if ext_in_url.startswith('.') else f".{ext_in_url}"
-        filename = f"{asset_type}_{url_hash}{final_ext}"
+        filename = f"{asset_type}_{url_hash}{final_ext}" """
         
-        file_path = os.path.join(save_dir, filename)
+        file_path = os.path.join(save_dir, original_url)
 
         # Skip if file already exists
         if os.path.exists(file_path):
@@ -138,7 +157,6 @@ def truncate_repeated_elements(soup, max_items=5, max_carousels=2, max_menu_sect
     - max_menu_sections: Maximum number of menu sections to keep (default: 3)
     """
     try:
-        
         truncated_count = 0
         carousel_count = 0
         
@@ -716,3 +734,255 @@ def truncate_repeated_elements(soup, max_items=5, max_carousels=2, max_menu_sect
     except Exception as e:
         print(f"Error in truncate_repeated_elements: {e}")
         return 0
+
+def download_javascript_asset(asset_url, base_url, save_dir, asset_type="js"):
+    """
+    Downloads JavaScript assets and stores them in the proper directory structure.
+    
+    Args:
+        asset_url (str): URL of the JavaScript asset to download
+        base_url (str): Base URL of the page
+        save_dir (str): Base directory to save assets
+        asset_type (str): Type of asset (default: "js")
+        
+    Returns:
+        tuple: (original_url, file_path) or (None, None) if download failed
+    """
+    try:
+        original_url = asset_url  
+        
+        # Handle protocol-relative URLs
+        if asset_url.startswith('//'):
+            asset_url = 'https:' + asset_url
+        # Handle relative URLs
+        elif not (asset_url.startswith('http://') or asset_url.startswith('https://')):
+            asset_url = urljoin(base_url, asset_url)
+
+        # Parse the URL to extract path components
+        parsed_url = urlparse(asset_url)
+        
+        # For relative URLs, maintain the exact same structure
+        if original_url.startswith('/'):
+            # Root-relative URL (starts with /)
+            relative_path = original_url.lstrip('/')
+            file_path = os.path.join(save_dir, relative_path)
+            # Create the directory structure
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        elif not (original_url.startswith('http://') or original_url.startswith('https://') or original_url.startswith('//')):
+            # Relative URL (doesn't start with http://, https://, or //)
+            file_path = os.path.join(save_dir, original_url)
+            # Create the directory structure
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        else:
+            # Absolute URL - create a directory structure that mirrors the URL path
+            path_parts = parsed_url.path.strip('/').split('/')
+            
+            if len(path_parts) > 1:
+                # Use the directory structure from the URL
+                relative_dir = os.path.join(*path_parts[:-1])
+                filename = path_parts[-1]
+            else:
+                # If there's just a filename with no directories
+                relative_dir = ""
+                filename = path_parts[0] if path_parts else "script.js"
+            
+            # If filename has no extension, add .js
+            if not os.path.splitext(filename)[1]:
+                filename += ".js"
+                
+            # Create the full directory path
+            full_dir = os.path.join(save_dir, relative_dir)
+            os.makedirs(full_dir, exist_ok=True)
+            
+            # Full path to save the file
+            file_path = os.path.join(full_dir, filename)
+        
+        # If the file already exists, return the path
+        if os.path.exists(file_path):
+            print(f"JavaScript file already exists: {file_path}")
+            return original_url, file_path
+
+        # Download the JavaScript file
+        response = requests.get(asset_url, timeout=10)
+        if response.status_code != 200:
+            print(f"Skipping JavaScript {asset_url} because of status code {response.status_code}")
+            return None, None
+
+        # Save the file
+        with open(file_path, 'wb') as f:
+            f.write(response.content)
+        
+        print(f"Downloaded JavaScript: {original_url} to {file_path}")
+        return original_url, file_path
+
+    except Exception as e:
+        print(f"Error downloading JavaScript from {asset_url}: {e}")
+        return None, None
+
+def download_all_javascript_from_page(html_content, page_url, output_dir):
+    """
+    Downloads all JavaScript files referenced in an HTML page.
+    
+    Args:
+        html_content (str): HTML content of the page
+        page_url (str): URL of the page
+        output_dir (str): Directory to save JavaScript files
+        
+    Returns:
+        list: List of tuples (original_url, file_path) for all downloaded JavaScript files
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    base_url = '/'.join(page_url.split('/')[:3])
+    
+    # Create the output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # List to store results
+    downloaded_files = []
+    
+    # Process script tags with src attribute
+    for script in soup.find_all('script', src=True):
+        src = script.get('src')
+        if src:
+            asset_url, file_path = download_javascript_asset(src, base_url, output_dir)
+            if file_path:
+                downloaded_files.append((asset_url, file_path))
+    
+    # Process link tags with rel="preload" and as="script"
+    for link in soup.find_all('link', attrs={'rel': 'preload', 'as': 'script'}):
+        href = link.get('href')
+        if href:
+            asset_url, file_path = download_javascript_asset(href, base_url, output_dir)
+            if file_path:
+                downloaded_files.append((asset_url, file_path))
+    
+    # Process inline scripts
+    inline_scripts_dir = os.path.join(output_dir, "inline_scripts")
+    os.makedirs(inline_scripts_dir, exist_ok=True)
+    
+    # Process inline scripts with specific types
+    for script in soup.find_all('script'):
+        # Skip scripts with src attribute as they're already processed
+        if script.get('src'):
+            continue
+            
+        script_type = script.get('type', '')
+        script_id = script.get('id', '')
+        script_content = script.string
+        
+        # Skip empty scripts
+        if not script_content:
+            continue
+            
+        # Determine filename based on script attributes
+        if script_id:
+            # Use script ID for the filename
+            filename = f"{script_id.replace('/', '_').replace(':', '_')}.js"
+        elif script_type in ['module', 'importmap', 'application/json', 'application/ld+json']:
+            # Use type for specialized scripts
+            content_hash = hashlib.md5(script_content.encode('utf-8')).hexdigest()[:8]
+            script_type_clean = script_type.replace('/', '_').replace('application_', '')
+            filename = f"inline_{script_type_clean}_{content_hash}.js"
+        else:
+            # Generic inline script
+            content_hash = hashlib.md5(script_content.encode('utf-8')).hexdigest()[:8]
+            filename = f"inline_script_{content_hash}.js"
+        
+        # Save the inline script
+        file_path = os.path.join(inline_scripts_dir, filename)
+        
+        # For JSON content, try to format it nicely
+        if script_type in ['application/json', 'application/ld+json'] or script_id and 'json' in script_id.lower():
+            try:
+                # Try to parse and format JSON
+                import json
+                # Extract JSON from comments if present
+                json_content = script_content
+                if '/*' in json_content and '*/' in json_content:
+                    json_content = json_content.split('/*', 1)[1].split('*/', 1)[0].strip()
+                
+                # Parse and format JSON
+                parsed_json = json.loads(json_content)
+                formatted_json = json.dumps(parsed_json, indent=2)
+                
+                # Save with .json extension
+                file_path = file_path.replace('.js', '.json')
+                
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(formatted_json)
+                
+                downloaded_files.append((f"inline_json_{script_id}", file_path))
+                continue
+            except (json.JSONDecodeError, Exception) as e:
+                # If JSON parsing fails, fall back to saving as regular script
+                print(f"Failed to parse JSON in script {script_id}: {e}")
+                # Restore original file path with .js extension
+                file_path = os.path.join(inline_scripts_dir, filename)
+        
+        # Save as regular script
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(script_content)
+        
+        downloaded_files.append((f"inline_script_{script_id or 'unnamed'}", file_path))
+    
+    print(f"Downloaded {len(downloaded_files)} JavaScript files to {output_dir}")
+    return downloaded_files
+
+def download_js_from_url(url, output_dir=None):
+    """
+    Command-line utility function to download all JavaScript files from a URL.
+    
+    Args:
+        url (str): URL of the page to download JavaScript from
+        output_dir (str, optional): Directory to save JavaScript files. 
+                                   If None, creates a directory based on the domain.
+    
+    Returns:
+        list: List of downloaded JavaScript files
+    """
+    try:
+        # Download the HTML content
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"Error: Could not download page from {url}, status code: {response.status_code}")
+            return []
+        
+        html_content = response.text
+        
+        # Parse the URL to get the domain for the output directory
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        
+        # Create output directory if not provided
+        if output_dir is None:
+            # Create a directory structure based on the URL path
+            path_parts = parsed_url.path.strip('/').split('/')
+            if path_parts and path_parts[0]:
+                # Use the first path component as a subdirectory
+                output_dir = os.path.join("js_downloads", domain, path_parts[0])
+            else:
+                output_dir = os.path.join("js_downloads", domain)
+        
+        # Download all JavaScript files
+        return download_all_javascript_from_page(html_content, url, output_dir)
+        
+    except Exception as e:
+        print(f"Error downloading JavaScript from {url}: {e}")
+        return []
+
+# Example usage as a command-line script
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
+        output_dir = sys.argv[2] if len(sys.argv) > 2 else None
+        
+        print(f"Downloading JavaScript files from {url}")
+        downloaded_files = download_js_from_url(url, output_dir)
+        
+        print(f"Downloaded {len(downloaded_files)} JavaScript files:")
+        for original_url, file_path in downloaded_files:
+            print(f"  {original_url} -> {file_path}")
+    else:
+        print("Usage: python -m workflows.automation_utils <url> [output_directory]")
