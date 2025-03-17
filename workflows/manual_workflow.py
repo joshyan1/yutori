@@ -18,7 +18,7 @@ class LoggedRequest:
         self.raw = request  # retain the original Playwright request
 
     def __repr__(self):
-        return f"<LoggedRequest {self.method} {self.url} at {self.timestamp}>"
+        return f"<LoggedRequest {self.method} {self.url} at {self.timestamp}. Post data:{self.post_data}>"
 
 class LoggedResponse:
     def __init__(self, response, logged_request):
@@ -29,7 +29,7 @@ class LoggedResponse:
         self.request = logged_request  # the corresponding logged request
 
     def __repr__(self):
-        return f"<LoggedResponse {self.status} for {self.request.url} at {self.timestamp}>"
+        return f"<LoggedResponse {self.status} for {self.request.url}. Response: {self.raw}>"
 
 # The InteractionLogger maps user interactions with network events.
 class InteractionLogger:
@@ -48,7 +48,8 @@ class InteractionLogger:
         # Use a slightly longer window to catch more related requests
         backlog_to_process = []
         for req in self.request_backlog:
-            if req.timestamp > timestamp - 1.0:  # Increased from 0.5 to 1.0
+            # Only process POST requests
+            if req.method == "POST" and req.timestamp > timestamp - 1.0:  # Increased from 0.5 to 1.0
                 backlog_to_process.append(req)
                 
         for logged_request in backlog_to_process:
@@ -168,6 +169,10 @@ async def manual_workflow(playwright_page, start_url):
         await logger.log_interaction(interaction)
     
     async def on_request(request):
+        # Only process POST requests
+        if request.method != "POST":
+            return
+            
         # Wrap the raw request in a LoggedRequest
         logged_request = LoggedRequest(request)
         
@@ -180,6 +185,13 @@ async def manual_workflow(playwright_page, start_url):
             logger.request_to_interaction[logged_request.id] = logger.interactions[-1]
 
     async def on_response(response):
+        # Get the raw request from the response
+        raw_req = response.request
+        
+        # Only process responses for POST requests
+        if raw_req.method != "POST":
+            return
+            
         await logger.add_response(response)
         
     await playwright_page.expose_function("notify_click", on_page_interaction)

@@ -312,14 +312,14 @@ def truncate_repeated_elements(soup, max_items=5, max_carousels=2, max_menu_sect
         # Common selectors for carousels, grids, and repeated elements
         grid_selectors = [
             # Uber Eats specific menu item selectors
-            "ul.k8.nj.nk.nl.nm.nn.no.ae",
-            "ul.k8.qb.qc.nl.nm.nn.no.qe.qf",  # Menu items container from your example
-            "li.np.nq.nr.ak.ns",
-            "li.np.nq.nr.qg.ak.bb.i7.gn",  # From your example
+            #"ul.k8.nj.nk.nl.nm.nn.no.ae",
+            #"ul.k8.qb.qc.nl.nm.nn.no.qe.qf",  # Menu items container from your example
+           # "li.np.nq.nr.ak.ns",
+            #"li.np.nq.nr.qg.ak.bb.i7.gn",  # From your example
             #"div[data-testid^='store-item']",
             #"a[href*='mod=quickView']",
-            "div.cd.al.nt.ak",
-            
+            #"div.cd.al.nt.ak",
+             
             # Carousels
             "ul.f4.cs.bh.nq.gn.nr",  
             "ul.f9.ak.gn.ns",        

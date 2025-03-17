@@ -8,11 +8,13 @@ from playwright.async_api import async_playwright
 from data_models import Site
 from workflows.manual_workflow import manual_workflow
 from workflows.automated_workflow import automated_workflow
+from workflows.clone_workflow import clone_workflow
+from workflows.enhanced_injection_workflow import enhanced_injection_workflow
 #from logger import SiteLogger
 #from cloner.clone_builder import CloneBuilder
 
 async def main():
-    start_url = "https://www.ubereats.com"  
+    start_url ="https://www.ubereats.com"
     user_data_dir = os.path.join(os.getcwd(), "persistent_user_data")
 
     # Create assets directory if it doesn't exist
@@ -78,9 +80,16 @@ async def main():
                     except Exception as e:
                         print(f"Warning: Could not close browser context properly: {e}")
 
-                print("Cloning complete! Check the 'site_data' folder for results.")
             except Exception as e:
                 print(f"Fatal error in automated workflow setup: {e}")
+
+        if site:
+            # Step 3: Build clone using the enhanced injection workflow
+            try:
+                site = enhanced_injection_workflow(site)
+                print("Enhanced cloning complete! Check the 'cloned_injection' folder for results.")
+            except Exception as e:
+                print(f"Error in enhanced injection workflow: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

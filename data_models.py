@@ -36,6 +36,9 @@ class Interaction:
     def add_response(self, response):
         self.responses.append(response)
 
+    def __str__(self):
+        return f"Interaction: {self.element_selector} at {self.coordinates}, {self.dom_path}. \nRequests: {self.requests}\nResponses: {self.responses}"
+
 class Link:
     def __init__(self, url: str, text: str):
         self.url = url
@@ -63,6 +66,14 @@ class Page:
     def add_internal_url(self, url: str, text: str):
         internal_url = Link(url, text)
         self.internal_links.append(internal_url)
+
+    def get_internal_links(self):
+        return ("\n".join([(link.text) + " " + (link.url) for link in self.internal_links]))
+
+    # Returns a formatted string of the interactions
+    # for LLM input
+    def synthesize_interactions(self):
+        return "\n\n".join([str(interaction) for interaction in self.interactions])
 
 class Site:
     # The manual traversal will fill out the page dictionary
